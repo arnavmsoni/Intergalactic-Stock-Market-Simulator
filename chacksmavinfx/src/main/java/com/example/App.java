@@ -94,7 +94,7 @@ public class App extends Application {
     private Label cashLabel;
     private Label investedLabel;
     private Label netWorthLabel;
-    private Label profitLossLabel;
+    // Removed profitLossLabel as requested
 
     private TableView<Stock> stockTable;
     private TextField buySellSharesField;
@@ -149,7 +149,7 @@ public class App extends Application {
         centerBox.setAlignment(Pos.CENTER);
         root.setCenter(centerBox);
 
-        // Bottom: News Feed and Portfolio (without holdings)
+        // Bottom: News Feed and Portfolio (without holdings and percent change)
         newsArea = new TextArea();
         newsArea.setEditable(false);
         newsArea.setWrapText(true);
@@ -332,8 +332,7 @@ public class App extends Application {
         cashLabel = new Label("Cash: $" + MONEY_FMT.format(playerMoney));
         investedLabel = new Label("Invested: $0.00");
         netWorthLabel = new Label("Net Worth: $" + MONEY_FMT.format(playerMoney));
-        profitLossLabel = new Label("+$0.00 (0.00%)");
-        profitLossLabel.setTextFill(Color.GREEN);
+        // profitLossLabel removed as requested
 
         NumberAxis xAxis = new NumberAxis();
         NumberAxis yAxis = new NumberAxis();
@@ -347,10 +346,10 @@ public class App extends Application {
         netWorthSeries.setName("Net Worth");
         netWorthChart.getData().add(netWorthSeries);
 
-        // Portfolio box now only displays key financial metrics and the net worth chart
+        // Portfolio box now displays cash, invested, net worth, and the net worth chart
         VBox portfolioBox = new VBox(8,
                 new Label("Portfolio:"),
-                cashLabel, investedLabel, netWorthLabel, profitLossLabel,
+                cashLabel, investedLabel, netWorthLabel,
                 netWorthChart
         );
         portfolioBox.setPadding(new Insets(5));
@@ -590,13 +589,9 @@ public class App extends Application {
     private void updateMoneyLabels() {
         double netWorth = calculateNetWorth();
         double invested = netWorth - playerMoney;
-        double profit = netWorth - startingMoney;
-        double pct = (profit / startingMoney) * 100.0;
         cashLabel.setText("Cash: $" + MONEY_FMT.format(playerMoney));
         investedLabel.setText("Invested: $" + MONEY_FMT.format(invested));
         netWorthLabel.setText("Net Worth: $" + MONEY_FMT.format(netWorth));
-        profitLossLabel.setText(String.format("%+$.2f (%.2f%%)", profit, pct));
-        profitLossLabel.setTextFill(profit >= 0 ? Color.GREEN : Color.RED);
     }
 
     private void logToMarket(String msg) {

@@ -4,15 +4,17 @@ import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 
 import javafx.animation.FadeTransition;
 import javafx.animation.KeyFrame;
-import javafx.animation.PauseTransition;
 import javafx.animation.Timeline;
 import javafx.application.Application;
+import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
@@ -23,6 +25,7 @@ import javafx.scene.chart.NumberAxis;
 import javafx.scene.chart.XYChart;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
+import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextArea;
@@ -36,136 +39,169 @@ import javafx.scene.text.Text;
 import javafx.stage.Stage;
 import javafx.util.Duration;
 
-
 public class App extends Application {
 
+    public static void main(String[] args) {
+        launch(args);
+    }
+
     // -----------------------------
-    // Simulation Settings
+    // Simulation Constants
     // -----------------------------
-    private static final int TOTAL_MONTHS = 12;       // Jan - Dec
-    private static final int SECONDS_PER_MONTH = 30;  // Each month is 30s => 12 * 30 = 6 min
-    private static final int TOTAL_TIME = TOTAL_MONTHS * SECONDS_PER_MONTH; // 360s (6:00)
+    private static final int TOTAL_MONTHS = 12;
+    private static final int SECONDS_PER_MONTH = 60;
+    private static final int TOTAL_TIME = TOTAL_MONTHS * SECONDS_PER_MONTH;
+
+    private static final int MIN_NEWS_PER_MONTH = 2;
+    private static final int MAX_NEWS_PER_MONTH = 3;
+    private static final int NEWS_IMPACT_DELAY = 10;  
+    private static final int NEWS_IMPACT_DURATION = 15;
+    private static final double NEWS_IMPACT_MULTIPLIER = 0.20;
+
+    private static final double PRICE_MOVE_UP = 5;  
+    private static final double PRICE_MOVE_DOWN = 5; 
 
     // -----------------------------
     // Game State
     // -----------------------------
-    private int currentMonthIndex = 0; // 0 = January, 1 = Feb, ...
+    private int currentMonthIndex = 0;
     private int secondsLeftInMonth = SECONDS_PER_MONTH;
-    private int totalTimeLeft = TOTAL_TIME; // 360 at start
+    private int totalTimeLeft = TOTAL_TIME;
+
     private double startingMoney = 10000.0;
     private double playerMoney = startingMoney;
-    private Map<String, Integer> portfolio = new HashMap<>();   // stockName -> shares
-    private Map<String, Double> costBasis = new HashMap<>();    // track total money spent on each stock for P/L
-    private double lastNetWorth = startingMoney;                // for chart
+
+    // Portfolio: stockName -> shares owned
+    private Map<String, Integer> portfolio = new HashMap<>();
+
+    // Net-worth chart series
+    private XYChart.Series<Number, Number> netWorthSeries = new XYChart.Series<>();
+    private int chartTimeCounter = 0;
+
+    // Monthly news triggers
+    private Set<Integer> monthlyNewsTriggers = new HashSet<>();
+    private int monthlyNewsCount = 0;
+
     private Random random = new Random();
 
-    // Keep track of net worth over time (for the chart)
-    private XYChart.Series<Number, Number> netWorthSeries = new XYChart.Series<>();
-    private int chartTimeCounter = 0; // x-axis time steps
-
     // -----------------------------
-    // News System
-    // -----------------------------
-    private TextArea newsArea;
-    private Timeline newsTimeline;
-    private List<String> possibleNews = new ArrayList<>();
-    private Map<String, List<String>> stockGroups = new HashMap<>(); // for complementary/substitute logic
-
-    // -----------------------------
-    // UI Elements
+    // JavaFX UI Elements
     // -----------------------------
     private Label timeLeftLabel;
     private Label monthLabel;
     private Label secondsInMonthLabel;
-    private Label totalMoneyLabel;
+
+    private Label cashLabel;
+    private Label investedLabel;
+    private Label netWorthLabel;
     private Label profitLossLabel;
+
     private TableView<Stock> stockTable;
     private TextField buySellSharesField;
     private TextArea marketLogArea;
-    private LineChart<Number, Number> netWorthChart;
-    private TableView<PortfolioItem> holdingsTable;
 
-    // -----------------------------
-    // Stock List
-    // -----------------------------
+    private TextArea newsArea;
+    private LineChart<Number, Number> netWorthChart;
+
+    // Stock Detail Pane
+    private VBox stockDetailPane;
+    private Label stockDescriptionLabel;
+    private LineChart<Number, Number> stockChart;
+
+    // Stock data
     private ObservableList<Stock> stocks;
 
-    // Format for money
+    // Predefined news headlines
+    private List<String> possibleNews = new ArrayList<>();
+    // Groups for complementary/substitute logic
+    private Map<String, List<String>> stockGroups = new HashMap<>();
+
+    // Formatter for money
     private static final DecimalFormat MONEY_FMT = new DecimalFormat("#,##0.00");
 
     @Override
     public void start(Stage stage) {
-        // Initialize data
-        initStockGroups();
         initPossibleNews();
+        initStockGroups();
         stocks = generateStocks();
 
-        // Build UI
         BorderPane root = new BorderPane();
-        root.setPadding(new Insets(10));
+        root.setPadding(new Insets(20));
+        // Inline style for background
+        root.setStyle("-fx-background-color: linear-gradient(to bottom right, #1e3c72, #2a5298);");
 
-        // Top bar: Time left, Month, Seconds in month
+        // Top Bar
         HBox topBar = buildTopBar();
         root.setTop(topBar);
 
-        // Center: Stock Table
+        // Center: Stock Table, Stock Detail, Trade Controls
         stockTable = buildStockTable();
+        stockTable.setPrefWidth(500);
+        stockTable.setPrefHeight(400);
 
-        // Right panel: Buy/Sell & Market Log
+        stockDetailPane = buildStockDetailPane();
+
         VBox rightPanel = buildRightPanel();
+        rightPanel.setPrefWidth(400);
 
-        // Bottom left: News feed
-        newsArea = new TextArea();
-        newsArea.setEditable(false);
-        newsArea.setPrefHeight(120);
-        newsArea.setWrapText(true);
-        VBox newsBox = new VBox(new Label("News Feed:"), newsArea);
-        newsBox.setSpacing(5);
-
-        // Bottom right: Portfolio (Total money, P/L, chart, holdings)
-        VBox portfolioBox = buildPortfolioBox();
-
-        // Layout center + right
-        HBox centerBox = new HBox(10, stockTable, rightPanel);
-        centerBox.setPrefHeight(300);
+        HBox centerBox = new HBox(10, stockTable, stockDetailPane, rightPanel);
+        centerBox.setPadding(new Insets(10));
+        centerBox.setAlignment(Pos.CENTER);
         root.setCenter(centerBox);
 
-        // Layout bottom: news on left, portfolio on right
+        // Bottom: News Feed and Portfolio (without holdings)
+        newsArea = new TextArea();
+        newsArea.setEditable(false);
+        newsArea.setWrapText(true);
+        newsArea.setPrefHeight(200);
+        newsArea.setStyle("-fx-background-color: #f4f4f4; -fx-border-color: #ddd; -fx-border-radius: 5; -fx-font-family: Arial; -fx-font-size: 14px;");
+
+        VBox newsBox = new VBox(new Label("News Feed:"), newsArea);
+        newsBox.setSpacing(5);
+        newsBox.setPrefWidth(500);
+        newsBox.setStyle("-fx-background-color: white; -fx-border-color: #ccc; -fx-border-radius: 5; -fx-padding: 10;");
+
+        VBox portfolioBox = buildPortfolioBox();
+        portfolioBox.setPrefWidth(500);
+
         HBox bottomBox = new HBox(10, newsBox, portfolioBox);
         bottomBox.setPadding(new Insets(10));
         bottomBox.setAlignment(Pos.CENTER_LEFT);
         root.setBottom(bottomBox);
 
-        // Scene
-        Scene scene = new Scene(root, 1200, 700);
+        Scene scene = new Scene(root, 1400, 900);
         stage.setScene(scene);
         stage.setTitle("Intergalactic Stock Market - Year 2100");
         stage.show();
 
-        // Start the timers
+        stockTable.getSelectionModel().selectedItemProperty().addListener((obs, oldSel, newSel) -> {
+            updateStockDetailPane(newSel);
+        });
+
         startGameTimer();
         startStockPriceTimer();
         startNewsTimer();
+        generateMonthlyNewsTriggers();
     }
 
-    // --------------------------------
-    // Build UI Components
-    // --------------------------------
-
+    // -----------------------------
+    // UI Builder Methods with Inline Styles
+    // -----------------------------
     private HBox buildTopBar() {
-        timeLeftLabel = new Label("Time Left: 06:00");
+        timeLeftLabel = new Label("Time Left: 12:00");
         monthLabel = new Label("Month: January");
-        secondsInMonthLabel = new Label("Sec in Month: 30");
+        secondsInMonthLabel = new Label("Sec in Month: 60");
 
-        HBox topBar = new HBox(20, timeLeftLabel, monthLabel, secondsInMonthLabel);
+        HBox topBar = new HBox(40, timeLeftLabel, monthLabel, secondsInMonthLabel);
         topBar.setPadding(new Insets(10));
         topBar.setAlignment(Pos.CENTER_LEFT);
+        // Inline style for top bar
+        topBar.setStyle("-fx-background-color: rgba(255,255,255,0.85); -fx-background-radius: 10; -fx-padding: 15; -fx-font-size: 18px; -fx-font-weight: bold;");
         return topBar;
     }
 
     private TableView<Stock> buildStockTable() {
         TableView<Stock> table = new TableView<>();
-        table.setPrefWidth(400);
 
         TableColumn<Stock, String> nameCol = new TableColumn<>("Investment");
         nameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
@@ -173,20 +209,86 @@ public class App extends Application {
 
         TableColumn<Stock, Double> priceCol = new TableColumn<>("Price/Share");
         priceCol.setCellValueFactory(new PropertyValueFactory<>("price"));
-        priceCol.setPrefWidth(110);
+        priceCol.setPrefWidth(120);
 
         TableColumn<Stock, String> moveCol = new TableColumn<>("Movement");
         moveCol.setCellValueFactory(new PropertyValueFactory<>("movementIndicator"));
         moveCol.setPrefWidth(100);
 
-        table.getColumns().addAll(nameCol, priceCol, moveCol);
-        table.setItems(stocks);
+        TableColumn<Stock, String> percentCol = new TableColumn<>("% Change");
+        percentCol.setPrefWidth(100);
+        percentCol.setCellValueFactory(cellData -> cellData.getValue().percentChangeProperty());
+        percentCol.setCellFactory(column -> new TableCell<Stock, String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setTextFill(Color.BLACK);
+                } else {
+                    setText(item);
+                    try {
+                        double val = Double.parseDouble(item.replace("%", ""));
+                        if (val > 0) {
+                            setTextFill(Color.GREEN);
+                        } else if (val < 0) {
+                            setTextFill(Color.RED);
+                        } else {
+                            setTextFill(Color.BLACK);
+                        }
+                    } catch (NumberFormatException e) {
+                        setTextFill(Color.BLACK);
+                    }
+                }
+            }
+        });
 
+        table.getColumns().addAll(nameCol, priceCol, moveCol, percentCol);
+        table.setItems(stocks);
+        // Inline style for stock table
+        table.setStyle("-fx-background-color: white; -fx-border-color: #ccc; -fx-border-radius: 5; -fx-padding: 5;");
         return table;
     }
 
+    private VBox buildStockDetailPane() {
+        stockDescriptionLabel = new Label("Select a stock to see details.");
+        stockDescriptionLabel.setWrapText(true);
+        stockDescriptionLabel.setPrefWidth(300);
+
+        NumberAxis xAxis = new NumberAxis();
+        NumberAxis yAxis = new NumberAxis();
+        xAxis.setLabel("Time (sec)");
+        yAxis.setLabel("Price ($)");
+
+        stockChart = new LineChart<>(xAxis, yAxis);
+        stockChart.setPrefSize(300, 250);
+        stockChart.setCreateSymbols(false);
+        stockChart.setAnimated(false);
+
+        VBox detailPane = new VBox(10, stockDescriptionLabel, stockChart);
+        detailPane.setPadding(new Insets(10));
+        detailPane.setAlignment(Pos.TOP_LEFT);
+        detailPane.setPrefWidth(320);
+        // Inline style for stock detail pane
+        detailPane.setStyle("-fx-background-color: white; -fx-border-color: #ccc; -fx-border-radius: 5; -fx-padding: 10;");
+        return detailPane;
+    }
+
+    private void updateStockDetailPane(Stock stock) {
+        if (stock == null) {
+            stockDescriptionLabel.setText("Select a stock to see details.");
+            stockChart.getData().clear();
+            return;
+        }
+        stockDescriptionLabel.setText(stock.getName() + ": " + stock.getDescription());
+        XYChart.Series<Number, Number> series = new XYChart.Series<>();
+        series.setName(stock.getName());
+        series.getData().addAll(stock.getPriceHistory());
+        stockChart.getData().clear();
+        stockChart.getData().add(series);
+    }
+
     private VBox buildRightPanel() {
-        // Buy/Sell controls
         buySellSharesField = new TextField();
         buySellSharesField.setPromptText("Shares");
         buySellSharesField.setPrefWidth(80);
@@ -197,153 +299,113 @@ public class App extends Application {
         Button sellButton = new Button("Sell");
         sellButton.setOnAction(e -> sellShares(false));
 
-        // For quick full or half sells, let's do a small HBox
-        Button sellAllButton = new Button("Sell All");
-        sellAllButton.setOnAction(e -> sellShares(true));
-
         Button buyMaxButton = new Button("Buy Max");
         buyMaxButton.setOnAction(e -> buyShares(true));
 
-        HBox quickSellBox = new HBox(5, sellAllButton, buyMaxButton);
-        quickSellBox.setAlignment(Pos.CENTER_LEFT);
+        Button sellAllButton = new Button("Sell All");
+        sellAllButton.setOnAction(e -> sellShares(true));
 
-        VBox buySellBox = new VBox(5,
-                new Label("Trade Controls:"),
-                new HBox(5, new Label("Shares:"), buySellSharesField),
-                new HBox(5, buyButton, sellButton),
-                quickSellBox
-        );
-        buySellBox.setPadding(new Insets(5));
-        buySellBox.setAlignment(Pos.CENTER_LEFT);
-        buySellBox.setStyle("-fx-border-color: gray; -fx-border-width: 1; -fx-padding: 5;");
+        HBox tradeBox1 = new HBox(5, new Label("Shares:"), buySellSharesField);
+        HBox tradeBox2 = new HBox(5, buyButton, sellButton, buyMaxButton, sellAllButton);
+        tradeBox1.setAlignment(Pos.CENTER_LEFT);
+        tradeBox2.setAlignment(Pos.CENTER_LEFT);
 
-        // Market log
+        VBox tradeControls = new VBox(5, new Label("Trade Controls:"), tradeBox1, tradeBox2);
+        tradeControls.setPadding(new Insets(5));
+        // Inline style for trade controls
+        tradeControls.setStyle("-fx-background-color: #f9f9f9; -fx-padding: 10; -fx-border-color: #ddd; -fx-border-radius: 5;");
+        
         marketLogArea = new TextArea();
         marketLogArea.setEditable(false);
         marketLogArea.setWrapText(true);
-        marketLogArea.setPrefHeight(300);
+        marketLogArea.setPrefHeight(350);
+        marketLogArea.setStyle("-fx-background-color: #f4f4f4; -fx-border-color: #ddd; -fx-border-radius: 5; -fx-font-family: Arial; -fx-font-size: 14px;");
 
-        VBox box = new VBox(10, buySellBox, new Label("Market Log:"), marketLogArea);
-        box.setPrefWidth(300);
-        return box;
+        VBox panel = new VBox(10, tradeControls, new Label("Market Log:"), marketLogArea);
+        panel.setPrefWidth(400);
+        // Inline style for right panel
+        panel.setStyle("-fx-background-color: white; -fx-border-color: #ccc; -fx-border-radius: 5; -fx-padding: 10;");
+        return panel;
     }
 
     private VBox buildPortfolioBox() {
-        totalMoneyLabel = new Label("Total: $" + MONEY_FMT.format(playerMoney));
-        profitLossLabel = new Label("+$0.00 (0.00%)"); // Will update color for up/down
+        cashLabel = new Label("Cash: $" + MONEY_FMT.format(playerMoney));
+        investedLabel = new Label("Invested: $0.00");
+        netWorthLabel = new Label("Net Worth: $" + MONEY_FMT.format(playerMoney));
+        profitLossLabel = new Label("+$0.00 (0.00%)");
         profitLossLabel.setTextFill(Color.GREEN);
 
-        // Chart for net worth
         NumberAxis xAxis = new NumberAxis();
         NumberAxis yAxis = new NumberAxis();
-        xAxis.setLabel("Time (s)");
+        xAxis.setLabel("Time (sec)");
         yAxis.setLabel("Net Worth ($)");
+
         netWorthChart = new LineChart<>(xAxis, yAxis);
-        netWorthChart.setPrefSize(400, 200);
-        netWorthChart.setAnimated(false);
+        netWorthChart.setPrefSize(500, 250);
         netWorthChart.setCreateSymbols(false);
+        netWorthChart.setAnimated(false);
         netWorthSeries.setName("Net Worth");
         netWorthChart.getData().add(netWorthSeries);
 
-        // Holdings table
-        holdingsTable = new TableView<>();
-        holdingsTable.setPrefHeight(150);
-
-        TableColumn<PortfolioItem, String> hNameCol = new TableColumn<>("Holding");
-        hNameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
-        hNameCol.setPrefWidth(100);
-
-        TableColumn<PortfolioItem, Integer> hSharesCol = new TableColumn<>("Shares");
-        hSharesCol.setCellValueFactory(new PropertyValueFactory<>("shares"));
-        hSharesCol.setPrefWidth(60);
-
-        TableColumn<PortfolioItem, String> hValueCol = new TableColumn<>("Value");
-        hValueCol.setCellValueFactory(new PropertyValueFactory<>("valueString"));
-        hValueCol.setPrefWidth(80);
-
-        holdingsTable.getColumns().addAll(hNameCol, hSharesCol, hValueCol);
-
-        Button sellHalfBtn = new Button("Sell Half");
-        sellHalfBtn.setOnAction(e -> sellHalfSelectedHolding());
-        Button sellAllBtn = new Button("Sell All");
-        sellAllBtn.setOnAction(e -> sellAllSelectedHolding());
-        Button buyMoreBtn = new Button("Buy More");
-        buyMoreBtn.setOnAction(e -> buyMoreSelectedHolding());
-
-        HBox holdingsControls = new HBox(5, sellHalfBtn, sellAllBtn, buyMoreBtn);
-
-        VBox portfolioBox = new VBox(5,
+        // Portfolio box now only displays key financial metrics and the net worth chart
+        VBox portfolioBox = new VBox(8,
                 new Label("Portfolio:"),
-                totalMoneyLabel,
-                profitLossLabel,
-                netWorthChart,
-                new Label("Your Holdings:"),
-                holdingsTable,
-                holdingsControls
+                cashLabel, investedLabel, netWorthLabel, profitLossLabel,
+                netWorthChart
         );
         portfolioBox.setPadding(new Insets(5));
-        portfolioBox.setAlignment(Pos.TOP_LEFT);
-        portfolioBox.setStyle("-fx-border-color: gray; -fx-border-width: 1; -fx-padding: 5;");
-
+        portfolioBox.setStyle("-fx-background-color: white; -fx-border-color: #ccc; -fx-border-radius: 5; -fx-padding: 10;");
         return portfolioBox;
     }
 
-    // --------------------------------
-    // Timers & Simulation
-    // --------------------------------
-
+    // -----------------------------
+    // Timers & Monthly Logic
+    // -----------------------------
     private void startGameTimer() {
-        Timeline timeline = new Timeline(new KeyFrame(Duration.seconds(1), e -> {
+        Timeline gameTimeline = new Timeline(new KeyFrame(Duration.seconds(1), e -> {
             totalTimeLeft--;
             secondsLeftInMonth--;
 
-            // Update month if needed
+            int secondOfMonth = SECONDS_PER_MONTH - secondsLeftInMonth;
+            if (monthlyNewsTriggers.contains(secondOfMonth)) {
+                generateNewsEvent();
+                monthlyNewsCount++;
+            }
+
             if (secondsLeftInMonth <= 0) {
-                // Move to next month
                 currentMonthIndex++;
                 if (currentMonthIndex >= TOTAL_MONTHS) {
-                    // Game ends
                     endGame();
                     return;
                 }
                 secondsLeftInMonth = SECONDS_PER_MONTH;
                 monthLabel.setText("Month: " + monthName(currentMonthIndex));
-                // Possibly spawn news events for new month
+                generateMonthlyNewsTriggers();
             }
 
-            // Update labels
             updateTimeLabels();
-
             if (totalTimeLeft <= 0) {
                 endGame();
             }
-
-            // Update net worth chart
             updateNetWorthChart();
-
-            // Update portfolio table
-            refreshHoldingsTable();
         }));
-        timeline.setCycleCount(Timeline.INDEFINITE);
-        timeline.play();
+        gameTimeline.setCycleCount(Timeline.INDEFINITE);
+        gameTimeline.play();
     }
 
     private void startStockPriceTimer() {
-        // Price updates more frequently (e.g., every second)
-        Timeline stockTimeline = new Timeline(new KeyFrame(Duration.seconds(1), e -> {
+        Timeline priceTimeline = new Timeline(new KeyFrame(Duration.seconds(1), e -> {
             for (Stock s : stocks) {
-                s.updatePrice(); // random movement +/- 5 or -8
+                s.updatePrice();
             }
             stockTable.refresh();
         }));
-        stockTimeline.setCycleCount(Timeline.INDEFINITE);
-        stockTimeline.play();
+        priceTimeline.setCycleCount(Timeline.INDEFINITE);
+        priceTimeline.play();
     }
 
     private void startNewsTimer() {
-        // We want 2–3 news events per month. Each month is 30s => we can randomly pick times within the month
-        newsTimeline = new Timeline(new KeyFrame(Duration.seconds(5), e -> {
-            // Possibly trigger a news event. We can do a small random chance every 5s
+        Timeline newsTimeline = new Timeline(new KeyFrame(Duration.seconds(5), e -> {
             if (random.nextDouble() < 0.25) {
                 generateNewsEvent();
             }
@@ -352,10 +414,19 @@ public class App extends Application {
         newsTimeline.play();
     }
 
-    // --------------------------------
-    // Trading Logic
-    // --------------------------------
+    private void generateMonthlyNewsTriggers() {
+        monthlyNewsTriggers.clear();
+        monthlyNewsCount = 0;
+        int eventsThisMonth = random.nextInt(MAX_NEWS_PER_MONTH - MIN_NEWS_PER_MONTH + 1) + MIN_NEWS_PER_MONTH;
+        while (monthlyNewsTriggers.size() < eventsThisMonth) {
+            int randomSec = 1 + random.nextInt(SECONDS_PER_MONTH - 1);
+            monthlyNewsTriggers.add(randomSec);
+        }
+    }
 
+    // -----------------------------
+    // Trading Logic
+    // -----------------------------
     private void buyShares(boolean buyMax) {
         Stock selected = stockTable.getSelectionModel().getSelectedItem();
         if (selected == null) {
@@ -364,10 +435,9 @@ public class App extends Application {
         }
         int sharesToBuy;
         if (buyMax) {
-            // Buy as many shares as possible with current money
             sharesToBuy = (int) (playerMoney / selected.getPrice());
             if (sharesToBuy <= 0) {
-                logToMarket("Not enough funds to buy even 1 share of " + selected.getName());
+                logToMarket("Not enough cash to buy even 1 share of " + selected.getName());
                 return;
             }
         } else {
@@ -380,18 +450,15 @@ public class App extends Application {
         }
         double cost = sharesToBuy * selected.getPrice();
         if (cost > playerMoney) {
-            logToMarket("Insufficient funds to buy " + sharesToBuy + " shares of " + selected.getName());
+            logToMarket("Insufficient cash to buy " + sharesToBuy + " shares of " + selected.getName());
             return;
         }
         playerMoney -= cost;
-        portfolio.put(selected.getName(), portfolio.getOrDefault(selected.getName(), 0) + sharesToBuy);
-        costBasis.put(selected.getName(), costBasis.getOrDefault(selected.getName(), 0.0) + cost);
-
-        logToMarket("Bought " + sharesToBuy + " shares of " + selected.getName() + " @ $" + MONEY_FMT.format(selected.getPrice()) + " each.");
-
-        showBuyAnimation(selected.getPrice());
+        int oldShares = portfolio.getOrDefault(selected.getName(), 0);
+        portfolio.put(selected.getName(), oldShares + sharesToBuy);
+        showBuyAnimation(cost);
+        logToMarket("Bought " + sharesToBuy + " shares of " + selected.getName() + " @ $" + MONEY_FMT.format(selected.getPrice()));
         updateMoneyLabels();
-        refreshHoldingsTable();
     }
 
     private void sellShares(boolean sellAll) {
@@ -401,11 +468,10 @@ public class App extends Application {
             return;
         }
         int owned = portfolio.getOrDefault(selected.getName(), 0);
-        if (owned == 0) {
-            logToMarket("You own 0 shares of " + selected.getName() + ".");
+        if (owned <= 0) {
+            logToMarket("You own 0 shares of " + selected.getName());
             return;
         }
-
         int sharesToSell;
         if (sellAll) {
             sharesToSell = owned;
@@ -421,242 +487,139 @@ public class App extends Application {
                 return;
             }
         }
-
         double revenue = sharesToSell * selected.getPrice();
         playerMoney += revenue;
         portfolio.put(selected.getName(), owned - sharesToSell);
-
-        logToMarket("Sold " + sharesToSell + " shares of " + selected.getName() + " @ $" + MONEY_FMT.format(selected.getPrice()) + " each.");
-        showSellAnimation(selected.getPrice());
+        showSellAnimation(revenue);
+        logToMarket("Sold " + sharesToSell + " shares of " + selected.getName() + " @ $" + MONEY_FMT.format(selected.getPrice()));
         updateMoneyLabels();
-        refreshHoldingsTable();
     }
 
-    private void sellHalfSelectedHolding() {
-        PortfolioItem selected = holdingsTable.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            logToMarket("No holding selected to sell half.");
-            return;
-        }
-        String stockName = selected.getName();
-        Stock stockObj = findStockByName(stockName);
-        if (stockObj == null) return;
-
-        int owned = selected.getShares();
-        int half = owned / 2;
-        if (half == 0) {
-            logToMarket("You own fewer than 2 shares of " + stockName + "; can't sell half.");
-            return;
-        }
-        double revenue = half * stockObj.getPrice();
-        playerMoney += revenue;
-        portfolio.put(stockName, owned - half);
-
-        logToMarket("Sold half (" + half + ") of " + stockName + " @ $" + MONEY_FMT.format(stockObj.getPrice()));
-        showSellAnimation(stockObj.getPrice());
-        updateMoneyLabels();
-        refreshHoldingsTable();
-    }
-
-    private void sellAllSelectedHolding() {
-        PortfolioItem selected = holdingsTable.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            logToMarket("No holding selected to sell all.");
-            return;
-        }
-        String stockName = selected.getName();
-        Stock stockObj = findStockByName(stockName);
-        if (stockObj == null) return;
-
-        int owned = selected.getShares();
-        double revenue = owned * stockObj.getPrice();
-        playerMoney += revenue;
-        portfolio.put(stockName, 0);
-
-        logToMarket("Sold ALL (" + owned + ") of " + stockName + " @ $" + MONEY_FMT.format(stockObj.getPrice()));
-        showSellAnimation(stockObj.getPrice());
-        updateMoneyLabels();
-        refreshHoldingsTable();
-    }
-
-    private void buyMoreSelectedHolding() {
-        PortfolioItem selected = holdingsTable.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            logToMarket("No holding selected to buy more.");
-            return;
-        }
-        Stock stockObj = findStockByName(selected.getName());
-        if (stockObj == null) return;
-
-        // Example: buy 10 shares
-        int sharesToBuy = 10;
-        double cost = sharesToBuy * stockObj.getPrice();
-        if (cost > playerMoney) {
-            logToMarket("Not enough funds to buy 10 more shares of " + stockObj.getName());
-            return;
-        }
-        playerMoney -= cost;
-        portfolio.put(stockObj.getName(), portfolio.getOrDefault(stockObj.getName(), 0) + sharesToBuy);
-        costBasis.put(stockObj.getName(), costBasis.getOrDefault(stockObj.getName(), 0.0) + cost);
-
-        logToMarket("Bought 10 more shares of " + stockObj.getName() + " @ $" + MONEY_FMT.format(stockObj.getPrice()));
-        showBuyAnimation(stockObj.getPrice());
-        updateMoneyLabels();
-        refreshHoldingsTable();
-    }
-
-    // --------------------------------
-    // News & Price Impacts
-    // --------------------------------
-
+    // -----------------------------
+    // News & Price Impact
+    // -----------------------------
     private void generateNewsEvent() {
-        if (currentMonthIndex >= TOTAL_MONTHS) return; // game ended
-
-        // Pick a random news item
-        String news = possibleNews.get(random.nextInt(possibleNews.size()));
-        // Possibly affect a random stock or group
-        Stock stock = stocks.get(random.nextInt(stocks.size()));
-
-        // 50% chance we pick a group (complement/substitute) instead
+        if (currentMonthIndex >= TOTAL_MONTHS) return;
+        String headline = possibleNews.get(random.nextInt(possibleNews.size()));
+        Stock mainStock = stocks.get(random.nextInt(stocks.size()));
         boolean useGroup = random.nextBoolean();
-        if (useGroup) {
-            List<String> group = stockGroups.get(stock.getName());
-            if (group != null && !group.isEmpty()) {
-                // This entire group is impacted
-                for (String sName : group) {
-                    Stock sObj = findStockByName(sName);
-                    if (sObj != null) {
-                        schedulePriceImpact(sObj, news);
-                    }
-                }
-            }
+        List<Stock> impacted = new ArrayList<>();
+        if (useGroup && stockGroups.containsKey(mainStock.getName())) {
+            impacted.addAll(findStocksByNames(stockGroups.get(mainStock.getName())));
         } else {
-            // Just this one stock
-            schedulePriceImpact(stock, news);
+            impacted.add(mainStock);
         }
-
-        // Add to news feed
-        newsArea.appendText("[" + monthName(currentMonthIndex) + "] " + news + " (Affects " + stock.getName() + ")\n");
+        int factor = random.nextInt(5) + 1;
+        boolean isPositive = random.nextBoolean();
+        for (Stock s : impacted) {
+            double impactPercent = factor * NEWS_IMPACT_MULTIPLIER;
+            double totalImpact = s.getPrice() * impactPercent;
+            totalImpact = isPositive ? Math.abs(totalImpact) : -Math.abs(totalImpact);
+            applyNewsImpactOverTime(s, totalImpact, NEWS_IMPACT_DURATION, NEWS_IMPACT_DELAY);
+        }
+        StringBuilder sb = new StringBuilder();
+        for (Stock s : impacted) {
+            sb.append(s.getName()).append(", ");
+        }
+        String affectedNames = sb.toString().replaceAll(", $", "");
+        newsArea.appendText("[" + monthName(currentMonthIndex) + "] " + headline + " (Affects " + affectedNames + ")\n");
     }
 
-    private void schedulePriceImpact(Stock stock, String news) {
-        // Positive or negative?
-        double direction = random.nextBoolean() ? 1 : -1;
-        // We'll spread the total impact over 5 seconds
-        double totalImpact = random.nextDouble() * 10.0 * direction; // up to +/- 10
-        double step = totalImpact / 5.0; // small step each second
-
-        // Apply gradually
-        for (int i = 1; i <= 5; i++) {
-            PauseTransition pt = new PauseTransition(Duration.seconds(i));
-            pt.setOnFinished(e -> {
-                stock.applyNewsImpact(step);
+    private void applyNewsImpactOverTime(Stock stock, double totalImpact, int durationSeconds, int delaySeconds) {
+        double step = totalImpact / durationSeconds;
+        Timeline timeline = new Timeline();
+        for (int i = 1; i <= durationSeconds; i++) {
+            KeyFrame kf = new KeyFrame(Duration.seconds(delaySeconds + i), e -> {
+                double oldPrice = stock.getPrice();
+                double newPrice = oldPrice + step;
+                if (newPrice < 1) newPrice = 1;
+                stock.setPrice(newPrice);
+                stock.updateMovementIndicator(oldPrice, newPrice);
+                stock.getPriceHistory().add(new XYChart.Data<>(stock.nextHistoryCounter(), newPrice));
                 stockTable.refresh();
             });
-            pt.play();
+            timeline.getKeyFrames().add(kf);
         }
+        timeline.play();
     }
 
-    // --------------------------------
+    // -----------------------------
     // End Game
-    // --------------------------------
+    // -----------------------------
     private void endGame() {
-        logToMarket("\nThe year 2100 is over!");
+        logToMarket("\nAll 12 months of the year 2100 have passed!");
         double finalNetWorth = calculateNetWorth();
         double profit = finalNetWorth - startingMoney;
-        String result = "Final Net Worth: $" + MONEY_FMT.format(finalNetWorth) +
-                " (P/L: $" + MONEY_FMT.format(profit) + ")";
-        logToMarket(result);
-
-        // Disable further trading
+        logToMarket("Final Net Worth: $" + MONEY_FMT.format(finalNetWorth)
+                + " (P/L: $" + MONEY_FMT.format(profit) + ")");
         buySellSharesField.setDisable(true);
     }
 
-    // --------------------------------
-    // Helpers
-    // --------------------------------
-
-    private void logToMarket(String msg) {
-        marketLogArea.appendText(msg + "\n");
-    }
-
-    private void showBuyAnimation(double price) {
-        // A quick fade-in/out text
-        Text text = new Text("+" + MONEY_FMT.format(price));
-        text.setFill(Color.GREEN);
-        FadeTransition ft = new FadeTransition(Duration.seconds(2), text);
-        ft.setFromValue(1.0);
-        ft.setToValue(0.0);
-        ft.play();
-    }
-
-    private void showSellAnimation(double price) {
-        Text text = new Text("-" + MONEY_FMT.format(price));
-        text.setFill(Color.RED);
-        FadeTransition ft = new FadeTransition(Duration.seconds(2), text);
-        ft.setFromValue(1.0);
-        ft.setToValue(0.0);
-        ft.play();
-    }
-
-    private String monthName(int index) {
-        String[] months = {"January","February","March","April","May","June","July","August","September","October","November","December"};
-        if (index < 0 || index >= months.length) return "Unknown";
-        return months[index];
-    }
-
+    // -----------------------------
+    // Helper Methods
+    // -----------------------------
     private void updateTimeLabels() {
-        // totalTimeLeft => minutes:seconds
         int minutes = totalTimeLeft / 60;
         int seconds = totalTimeLeft % 60;
         timeLeftLabel.setText(String.format("Time Left: %02d:%02d", minutes, seconds));
-
-        // secondsLeftInMonth
         secondsInMonthLabel.setText("Sec in Month: " + secondsLeftInMonth);
-
-        // month label is updated upon rollover
     }
 
-    private void updateMoneyLabels() {
-        totalMoneyLabel.setText("Total: $" + MONEY_FMT.format(playerMoney));
-        double netWorth = calculateNetWorth();
-        double profit = netWorth - startingMoney;
-        double pct = (profit / startingMoney) * 100.0;
-        profitLossLabel.setText(String.format("%+$.2f (%.2f%%)", profit, pct));
-        if (profit >= 0) {
-            profitLossLabel.setTextFill(Color.GREEN);
-        } else {
-            profitLossLabel.setTextFill(Color.RED);
-        }
-    }
-
-    private double calculateNetWorth() {
-        double net = playerMoney;
-        for (Stock s : stocks) {
-            int owned = portfolio.getOrDefault(s.getName(), 0);
-            net += owned * s.getPrice();
-        }
-        return net;
+    private String monthName(int index) {
+        String[] months = {"January","February","March","April","May","June",
+                           "July","August","September","October","November","December"};
+        return (index >= 0 && index < months.length) ? months[index] : "Unknown";
     }
 
     private void updateNetWorthChart() {
         double netWorth = calculateNetWorth();
         chartTimeCounter++;
         netWorthSeries.getData().add(new XYChart.Data<>(chartTimeCounter, netWorth));
-        lastNetWorth = netWorth;
         updateMoneyLabels();
     }
 
-    private void refreshHoldingsTable() {
-        ObservableList<PortfolioItem> items = FXCollections.observableArrayList();
+    private double calculateNetWorth() {
+        double total = playerMoney;
         for (Stock s : stocks) {
             int owned = portfolio.getOrDefault(s.getName(), 0);
-            if (owned > 0) {
-                items.add(new PortfolioItem(s.getName(), owned, s.getPrice()));
-            }
+            total += owned * s.getPrice();
         }
-        holdingsTable.setItems(items);
-        holdingsTable.refresh();
+        return total;
+    }
+
+    private void updateMoneyLabels() {
+        double netWorth = calculateNetWorth();
+        double invested = netWorth - playerMoney;
+        double profit = netWorth - startingMoney;
+        double pct = (profit / startingMoney) * 100.0;
+        cashLabel.setText("Cash: $" + MONEY_FMT.format(playerMoney));
+        investedLabel.setText("Invested: $" + MONEY_FMT.format(invested));
+        netWorthLabel.setText("Net Worth: $" + MONEY_FMT.format(netWorth));
+        profitLossLabel.setText(String.format("%+$.2f (%.2f%%)", profit, pct));
+        profitLossLabel.setTextFill(profit >= 0 ? Color.GREEN : Color.RED);
+    }
+
+    private void logToMarket(String msg) {
+        marketLogArea.appendText(msg + "\n");
+    }
+
+    private void showBuyAnimation(double cost) {
+        Text text = new Text("+$" + MONEY_FMT.format(cost));
+        text.setFill(Color.GREEN);
+        fadeOutText(text);
+    }
+
+    private void showSellAnimation(double revenue) {
+        Text text = new Text("-$" + MONEY_FMT.format(revenue));
+        text.setFill(Color.RED);
+        fadeOutText(text);
+    }
+
+    private void fadeOutText(Text text) {
+        FadeTransition ft = new FadeTransition(Duration.seconds(2), text);
+        ft.setFromValue(1.0);
+        ft.setToValue(0.0);
+        ft.play();
     }
 
     private Stock findStockByName(String name) {
@@ -666,25 +629,49 @@ public class App extends Application {
         return null;
     }
 
-    // --------------------------------
-    // Data Generation
-    // --------------------------------
+    private List<Stock> findStocksByNames(List<String> names) {
+        List<Stock> result = new ArrayList<>();
+        for (String nm : names) {
+            Stock s = findStockByName(nm);
+            if (s != null) result.add(s);
+        }
+        return result;
+    }
+
+    // -----------------------------
+    // Data Initialization
+    // -----------------------------
+    private void initPossibleNews() {
+        possibleNews.add("Major breakthrough in quantum thrusters!");
+        possibleNews.add("Terraform Inc unveils new gene-edited seeds for Mars.");
+        possibleNews.add("Space Tourism faces safety lawsuit after rocket mishap.");
+        possibleNews.add("Asteroid Mining Co finds massive platinum deposit.");
+        possibleNews.add("Lunar Energy Corp sees record demand for Helium-3.");
+        possibleNews.add("Orbital Transport invests in next-gen propulsion.");
+        possibleNews.add("Zero-G Manufacturing perfects 3D printing for space habitats.");
+        possibleNews.add("Galactic Commodities surges on rare metal shortage.");
+        possibleNews.add("Deep Space Tech announces AI-based navigation system.");
+        possibleNews.add("Quantum Computing Labs reveals advanced entangled processor.");
+    }
+
+    private void initStockGroups() {
+        stockGroups.put("Asteroid Mining Co", Arrays.asList("Lunar Energy Corp", "Galactic Commodities"));
+        stockGroups.put("Terraform Inc", Arrays.asList("Mars Real Estate", "Space Tourism"));
+        stockGroups.put("Deep Space Tech", Arrays.asList("Orbital Transport", "Quantum Computing Labs"));
+    }
 
     private ObservableList<Stock> generateStocks() {
-        // 10 futuristic stocks
-        // We'll pick random initial prices in a range that “makes sense”
         List<Stock> list = new ArrayList<>();
-        list.add(new Stock("Asteroid Mining Co", randomPrice(100, 300)));
-        list.add(new Stock("Mars Real Estate", randomPrice(150, 400)));
-        list.add(new Stock("Space Tourism Inc", randomPrice(80, 200)));
-        list.add(new Stock("Galactic Commodities", randomPrice(90, 250)));
-        list.add(new Stock("Lunar Energy Corp", randomPrice(60, 150)));
-        list.add(new Stock("Orbital Transport", randomPrice(120, 350)));
-        list.add(new Stock("Terraform Inc", randomPrice(200, 500)));
-        list.add(new Stock("Deep Space Tech", randomPrice(70, 220)));
-        list.add(new Stock("Zero-G Manufacturing", randomPrice(100, 250)));
-        list.add(new Stock("Quantum Computing Labs", randomPrice(180, 400)));
-
+        list.add(new Stock("Asteroid Mining Co", randomPrice(100, 300), "Provides mining services on asteroids."));
+        list.add(new Stock("Mars Real Estate", randomPrice(150, 400), "Develops real estate on Mars."));
+        list.add(new Stock("Space Tourism", randomPrice(80, 200), "Offers leisure trips to space."));
+        list.add(new Stock("Galactic Commodities", randomPrice(90, 250), "Trades rare commodities across galaxies."));
+        list.add(new Stock("Lunar Energy Corp", randomPrice(60, 150), "Generates energy using lunar resources."));
+        list.add(new Stock("Orbital Transport", randomPrice(120, 350), "Provides transportation in orbit."));
+        list.add(new Stock("Terraform Inc", randomPrice(200, 500), "Works on terraforming planets."));
+        list.add(new Stock("Deep Space Tech", randomPrice(70, 220), "Develops advanced deep-space technology."));
+        list.add(new Stock("Zero-G Manufacturing", randomPrice(100, 250), "Manufactures goods in zero gravity."));
+        list.add(new Stock("Quantum Computing Labs", randomPrice(180, 400), "Pioneers quantum computing for space applications."));
         return FXCollections.observableArrayList(list);
     }
 
@@ -692,76 +679,48 @@ public class App extends Application {
         return min + (max - min) * random.nextDouble();
     }
 
-    private void initStockGroups() {
-        // Example: if "Deep Space Tech" goes down, "Orbital Transport" might also go down, etc.
-        // You can group them as you see fit
-        stockGroups.put("Asteroid Mining Co", Arrays.asList("Lunar Energy Corp", "Galactic Commodities"));
-        stockGroups.put("Mars Real Estate", Arrays.asList("Terraform Inc", "Space Tourism Inc"));
-        stockGroups.put("Space Tourism Inc", Arrays.asList("Orbital Transport", "Mars Real Estate"));
-        // ... add more as needed
-    }
-
-    private void initPossibleNews() {
-        possibleNews.add("Major breakthrough in quantum thrusters!");
-        possibleNews.add("Terraforming regulations tightened on Mars.");
-        possibleNews.add("Asteroid Mining Co discovers massive platinum deposit!");
-        possibleNews.add("Space Tourism Inc faces lawsuit after safety incident.");
-        possibleNews.add("Galactic Commodities sees spike in rare minerals demand.");
-        possibleNews.add("Orbital Transport partners with Deep Space Tech for new engines.");
-        possibleNews.add("Terraform Inc announces new gene-edited plants for Mars.");
-        possibleNews.add("Lunar Energy Corp experiences rocket fuel shortage.");
-        possibleNews.add("Zero-G Manufacturing develops advanced 3D printing for space habitats.");
-        possibleNews.add("Quantum Computing Labs reveals next-gen AI processor.");
-    }
-
-    // --------------------------------
-    // Inner Classes
-    // --------------------------------
-
+    // -----------------------------
+    // Inner Class for Stock Data
+    // -----------------------------
     public class Stock {
         private String name;
         private double price;
-        private double lastPrice;
+        private double initialPrice;
         private String movementIndicator;
+        private String description;
+        private ObservableList<XYChart.Data<Number, Number>> priceHistory = FXCollections.observableArrayList();
+        private int historyCounter = 0;
 
-        public Stock(String name, double price) {
+        public Stock(String name, double price, String description) {
             this.name = name;
             this.price = price;
-            this.lastPrice = price;
+            this.initialPrice = price;
+            this.description = description;
             this.movementIndicator = "";
+            priceHistory.add(new XYChart.Data<>(historyCounter++, price));
         }
 
-        public String getName() {
-            return name;
-        }
+        public String getName() { return name; }
+        public double getPrice() { return price; }
+        public String getMovementIndicator() { return movementIndicator; }
+        public String getDescription() { return description; }
+        public ObservableList<XYChart.Data<Number, Number>> getPriceHistory() { return priceHistory; }
 
-        public double getPrice() {
-            return price;
-        }
+        public void setPrice(double newPrice) { this.price = newPrice; }
 
-        public String getMovementIndicator() {
-            return movementIndicator;
-        }
-
-        // Called every second to randomly move price between +5 and -8
         public void updatePrice() {
-            double move = random.nextDouble() * (5 + 8) - 8; // range: -8 to +5
+            double move = random.nextDouble() * (PRICE_MOVE_UP + PRICE_MOVE_DOWN) - PRICE_MOVE_DOWN;
             double oldPrice = price;
             price += move;
-            if (price < 1) {
-                price = 1; // floor
-            }
-            updateMovementIndicator(oldPrice, price);
-        }
-
-        public void applyNewsImpact(double step) {
-            double oldPrice = price;
-            price += step;
             if (price < 1) price = 1;
             updateMovementIndicator(oldPrice, price);
+            priceHistory.add(new XYChart.Data<>(historyCounter++, price));
+            if (priceHistory.size() > 100) {
+                priceHistory.remove(0);
+            }
         }
 
-        private void updateMovementIndicator(double oldP, double newP) {
+        public void updateMovementIndicator(double oldP, double newP) {
             double diff = newP - oldP;
             if (diff > 0) {
                 movementIndicator = String.format("+%.2f", diff);
@@ -771,25 +730,22 @@ public class App extends Application {
                 movementIndicator = "0.00";
             }
         }
-    }
 
-    public class PortfolioItem {
-        private String name;
-        private int shares;
-        private double currentPrice;
-
-        public PortfolioItem(String name, int shares, double currentPrice) {
-            this.name = name;
-            this.shares = shares;
-            this.currentPrice = currentPrice;
+        public SimpleStringProperty percentChangeProperty() {
+            double pctChange = ((price - initialPrice) / initialPrice) * 100;
+            return new SimpleStringProperty(String.format("%.2f%%", pctChange));
         }
 
-        public String getName() { return name; }
-        public int getShares() { return shares; }
+        public int nextHistoryCounter() {
+            return historyCounter++;
+        }
 
-        public String getValueString() {
-            double value = shares * currentPrice;
-            return "$" + MONEY_FMT.format(value);
+        public void applyNewsImpact(double step) {
+            double oldPrice = price;
+            price += step;
+            if (price < 1) price = 1;
+            updateMovementIndicator(oldPrice, price);
+            priceHistory.add(new XYChart.Data<>(historyCounter++, price));
         }
     }
 }

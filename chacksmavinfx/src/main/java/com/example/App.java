@@ -41,16 +41,12 @@ import javafx.util.Duration;
 
 public class App extends Application {
 
-    public static void main(String[] args) {
-        launch(args);
-    }
-
-    // -----------------------------
+    // ------------------------------------------------------------------------
     // Simulation Constants
-    // -----------------------------
-    private static final int TOTAL_MONTHS = 12;
-    private static final int SECONDS_PER_MONTH = 60;
-    private static final int TOTAL_TIME = TOTAL_MONTHS * SECONDS_PER_MONTH;
+    // ------------------------------------------------------------------------
+    private static final int TOTAL_MONTHS = 12;           // January to December
+    private static final int SECONDS_PER_MONTH = 60;      // Each month = 60 seconds
+    private static final int TOTAL_TIME = TOTAL_MONTHS * SECONDS_PER_MONTH;  // 12 minutes
 
     private static final int MIN_NEWS_PER_MONTH = 2;
     private static final int MAX_NEWS_PER_MONTH = 3;
@@ -58,12 +54,12 @@ public class App extends Application {
     private static final int NEWS_IMPACT_DURATION = 15;
     private static final double NEWS_IMPACT_MULTIPLIER = 0.20;
 
-    private static final double PRICE_MOVE_UP = 5;  
-    private static final double PRICE_MOVE_DOWN = 5; 
+    private static final double PRICE_MOVE_UP = 5;   // Max upward price move
+    private static final double PRICE_MOVE_DOWN = 5; // Max downward price move
 
-    // -----------------------------
+    // ------------------------------------------------------------------------
     // Game State
-    // -----------------------------
+    // ------------------------------------------------------------------------
     private int currentMonthIndex = 0;
     private int secondsLeftInMonth = SECONDS_PER_MONTH;
     private int totalTimeLeft = TOTAL_TIME;
@@ -84,29 +80,32 @@ public class App extends Application {
 
     private Random random = new Random();
 
-    // -----------------------------
+    // ------------------------------------------------------------------------
     // JavaFX UI Elements
-    // -----------------------------
+    // ------------------------------------------------------------------------
+    // Top bar
     private Label timeLeftLabel;
     private Label monthLabel;
     private Label secondsInMonthLabel;
 
+    // Portfolio summary
     private Label cashLabel;
     private Label investedLabel;
     private Label netWorthLabel;
-    // Removed profitLossLabel as requested
 
+    // Center area
     private TableView<Stock> stockTable;
-    private TextField buySellSharesField;
-    private TextArea marketLogArea;
-
-    private TextArea newsArea;
-    private LineChart<Number, Number> netWorthChart;
-
-    // Stock Detail Pane
     private VBox stockDetailPane;
     private Label stockDescriptionLabel;
     private LineChart<Number, Number> stockChart;
+
+    // Right panel (Trade controls + Market log)
+    private TextField buySellSharesField;
+    private TextArea marketLogArea;
+
+    // Bottom area
+    private TextArea newsArea;
+    private LineChart<Number, Number> netWorthChart;
 
     // Stock data
     private ObservableList<Stock> stocks;
@@ -121,85 +120,92 @@ public class App extends Application {
 
     @Override
     public void start(Stage stage) {
+        // 1) Initialize data
         initPossibleNews();
         initStockGroups();
         stocks = generateStocks();
 
+        // 2) Build the root layout with a nice background
         BorderPane root = new BorderPane();
-        root.setPadding(new Insets(20));
-        // Inline style for background
-        root.setStyle("-fx-background-color: linear-gradient(to bottom right, #1e3c72, #2a5298);");
+        root.setPadding(new Insets(15));
+        root.setStyle(
+            "-fx-background-color: linear-gradient(to bottom right, #1d2671, #c33764);" + 
+            "-fx-font-family: 'Segoe UI', sans-serif;"
+        );
 
-        // Top Bar
+        // 3) Create the top bar
         HBox topBar = buildTopBar();
         root.setTop(topBar);
 
-        // Center: Stock Table, Stock Detail, Trade Controls
+        // 4) Create the center area: a horizontal box with
+        //    [ stock table | stock detail pane | trade/log panel ]
         stockTable = buildStockTable();
-        stockTable.setPrefWidth(500);
-        stockTable.setPrefHeight(400);
-
         stockDetailPane = buildStockDetailPane();
+        VBox tradeAndLogPanel = buildRightPanel();
 
-        VBox rightPanel = buildRightPanel();
-        rightPanel.setPrefWidth(400);
-
-        HBox centerBox = new HBox(10, stockTable, stockDetailPane, rightPanel);
-        centerBox.setPadding(new Insets(10));
-        centerBox.setAlignment(Pos.CENTER);
+        HBox centerBox = new HBox(15, stockTable, stockDetailPane, tradeAndLogPanel);
+        centerBox.setAlignment(Pos.CENTER_LEFT);
+        centerBox.setPadding(new Insets(15));
         root.setCenter(centerBox);
 
-        // Bottom: News Feed and Portfolio (without holdings and percent change)
-        newsArea = new TextArea();
-        newsArea.setEditable(false);
-        newsArea.setWrapText(true);
-        newsArea.setPrefHeight(200);
-        newsArea.setStyle("-fx-background-color: #f4f4f4; -fx-border-color: #ddd; -fx-border-radius: 5; -fx-font-family: Arial; -fx-font-size: 14px;");
-
-        VBox newsBox = new VBox(new Label("News Feed:"), newsArea);
-        newsBox.setSpacing(5);
-        newsBox.setPrefWidth(500);
-        newsBox.setStyle("-fx-background-color: white; -fx-border-color: #ccc; -fx-border-radius: 5; -fx-padding: 10;");
-
+        // 5) Create the bottom area: a horizontal box with
+        //    [ news feed | portfolio summary & net worth chart ]
+        newsArea = buildNewsArea();
         VBox portfolioBox = buildPortfolioBox();
-        portfolioBox.setPrefWidth(500);
 
-        HBox bottomBox = new HBox(10, newsBox, portfolioBox);
-        bottomBox.setPadding(new Insets(10));
+        HBox bottomBox = new HBox(15, newsArea, portfolioBox);
         bottomBox.setAlignment(Pos.CENTER_LEFT);
+        bottomBox.setPadding(new Insets(15));
         root.setBottom(bottomBox);
 
-        Scene scene = new Scene(root, 1400, 900);
-        stage.setScene(scene);
+        // 6) Create the scene and stage
+        Scene scene = new Scene(root, 1280, 800);
         stage.setTitle("Intergalactic Stock Market - Year 2100");
+        stage.setScene(scene);
         stage.show();
 
+        // 7) Set up selection listener for the stock table
         stockTable.getSelectionModel().selectedItemProperty().addListener((obs, oldSel, newSel) -> {
             updateStockDetailPane(newSel);
         });
 
+        // 8) Start the timers (game, stock price updates, news, etc.)
         startGameTimer();
         startStockPriceTimer();
         startNewsTimer();
         generateMonthlyNewsTriggers();
     }
 
-    // -----------------------------
-    // UI Builder Methods with Inline Styles
-    // -----------------------------
+    // ------------------------------------------------------------------------
+    // Top Bar
+    // ------------------------------------------------------------------------
     private HBox buildTopBar() {
         timeLeftLabel = new Label("Time Left: 12:00");
         monthLabel = new Label("Month: January");
         secondsInMonthLabel = new Label("Sec in Month: 60");
 
+        // Style for top bar labels
+        String labelStyle = "-fx-text-fill: #ffffff; -fx-font-size: 16px; -fx-font-weight: bold;";
+
+        timeLeftLabel.setStyle(labelStyle);
+        monthLabel.setStyle(labelStyle);
+        secondsInMonthLabel.setStyle(labelStyle);
+
         HBox topBar = new HBox(40, timeLeftLabel, monthLabel, secondsInMonthLabel);
         topBar.setPadding(new Insets(10));
         topBar.setAlignment(Pos.CENTER_LEFT);
-        // Inline style for top bar
-        topBar.setStyle("-fx-background-color: rgba(255,255,255,0.85); -fx-background-radius: 10; -fx-padding: 15; -fx-font-size: 18px; -fx-font-weight: bold;");
+
+        // Slight translucent overlay
+        topBar.setStyle(
+            "-fx-background-color: rgba(255, 255, 255, 0.15);" +
+            "-fx-background-radius: 8;"
+        );
         return topBar;
     }
 
+    // ------------------------------------------------------------------------
+    // Stock Table
+    // ------------------------------------------------------------------------
     private TableView<Stock> buildStockTable() {
         TableView<Stock> table = new TableView<>();
 
@@ -209,14 +215,14 @@ public class App extends Application {
 
         TableColumn<Stock, Double> priceCol = new TableColumn<>("Price/Share");
         priceCol.setCellValueFactory(new PropertyValueFactory<>("price"));
-        priceCol.setPrefWidth(120);
+        priceCol.setPrefWidth(100);
 
         TableColumn<Stock, String> moveCol = new TableColumn<>("Movement");
         moveCol.setCellValueFactory(new PropertyValueFactory<>("movementIndicator"));
-        moveCol.setPrefWidth(100);
+        moveCol.setPrefWidth(90);
 
         TableColumn<Stock, String> percentCol = new TableColumn<>("% Change");
-        percentCol.setPrefWidth(100);
+        percentCol.setPrefWidth(90);
         percentCol.setCellValueFactory(cellData -> cellData.getValue().percentChangeProperty());
         percentCol.setCellFactory(column -> new TableCell<Stock, String>() {
             @Override
@@ -245,15 +251,26 @@ public class App extends Application {
 
         table.getColumns().addAll(nameCol, priceCol, moveCol, percentCol);
         table.setItems(stocks);
-        // Inline style for stock table
-        table.setStyle("-fx-background-color: white; -fx-border-color: #ccc; -fx-border-radius: 5; -fx-padding: 5;");
+        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+
+        table.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-border-color: #ccc;" +
+            "-fx-border-radius: 5;" +
+            "-fx-table-cell-border-color: #eee;"
+        );
+
         return table;
     }
 
+    // ------------------------------------------------------------------------
+    // Stock Detail Pane
+    // ------------------------------------------------------------------------
     private VBox buildStockDetailPane() {
         stockDescriptionLabel = new Label("Select a stock to see details.");
         stockDescriptionLabel.setWrapText(true);
         stockDescriptionLabel.setPrefWidth(300);
+        stockDescriptionLabel.setStyle("-fx-font-size: 14px; -fx-text-fill: #333;");
 
         NumberAxis xAxis = new NumberAxis();
         NumberAxis yAxis = new NumberAxis();
@@ -261,16 +278,22 @@ public class App extends Application {
         yAxis.setLabel("Price ($)");
 
         stockChart = new LineChart<>(xAxis, yAxis);
-        stockChart.setPrefSize(300, 250);
+        stockChart.setPrefSize(350, 250);
         stockChart.setCreateSymbols(false);
         stockChart.setAnimated(false);
+        stockChart.setStyle("-fx-background-color: #fafafa;");
 
         VBox detailPane = new VBox(10, stockDescriptionLabel, stockChart);
         detailPane.setPadding(new Insets(10));
         detailPane.setAlignment(Pos.TOP_LEFT);
-        detailPane.setPrefWidth(320);
-        // Inline style for stock detail pane
-        detailPane.setStyle("-fx-background-color: white; -fx-border-color: #ccc; -fx-border-radius: 5; -fx-padding: 10;");
+        detailPane.setPrefWidth(350);
+
+        detailPane.setStyle(
+            "-fx-background-color: rgba(255,255,255,0.8);" +
+            "-fx-border-color: #ccc;" +
+            "-fx-border-radius: 5;" +
+            "-fx-padding: 10;"
+        );
         return detailPane;
     }
 
@@ -280,7 +303,9 @@ public class App extends Application {
             stockChart.getData().clear();
             return;
         }
-        stockDescriptionLabel.setText(stock.getName() + ": " + stock.getDescription());
+        stockDescriptionLabel.setText(
+            stock.getName() + ":\n" + stock.getDescription()
+        );
         XYChart.Series<Number, Number> series = new XYChart.Series<>();
         series.setName(stock.getName());
         series.getData().addAll(stock.getPriceHistory());
@@ -288,51 +313,101 @@ public class App extends Application {
         stockChart.getData().add(series);
     }
 
+    // ------------------------------------------------------------------------
+    // Right Panel (Trade Controls + Market Log)
+    // ------------------------------------------------------------------------
     private VBox buildRightPanel() {
+        // Trade controls
         buySellSharesField = new TextField();
         buySellSharesField.setPromptText("Shares");
-        buySellSharesField.setPrefWidth(80);
+        buySellSharesField.setPrefWidth(60);
 
         Button buyButton = new Button("Buy");
         buyButton.setOnAction(e -> buyShares(false));
-
         Button sellButton = new Button("Sell");
         sellButton.setOnAction(e -> sellShares(false));
-
         Button buyMaxButton = new Button("Buy Max");
         buyMaxButton.setOnAction(e -> buyShares(true));
-
         Button sellAllButton = new Button("Sell All");
         sellAllButton.setOnAction(e -> sellShares(true));
 
         HBox tradeBox1 = new HBox(5, new Label("Shares:"), buySellSharesField);
-        HBox tradeBox2 = new HBox(5, buyButton, sellButton, buyMaxButton, sellAllButton);
         tradeBox1.setAlignment(Pos.CENTER_LEFT);
+
+        HBox tradeBox2 = new HBox(5, buyButton, sellButton, buyMaxButton, sellAllButton);
         tradeBox2.setAlignment(Pos.CENTER_LEFT);
 
-        VBox tradeControls = new VBox(5, new Label("Trade Controls:"), tradeBox1, tradeBox2);
-        tradeControls.setPadding(new Insets(5));
-        // Inline style for trade controls
-        tradeControls.setStyle("-fx-background-color: #f9f9f9; -fx-padding: 10; -fx-border-color: #ddd; -fx-border-radius: 5;");
-        
+        VBox tradeControls = new VBox(8,
+            new Label("Trade Controls:"),
+            tradeBox1,
+            tradeBox2
+        );
+        tradeControls.setPadding(new Insets(10));
+        tradeControls.setStyle(
+            "-fx-background-color: #f7f7f7;" +
+            "-fx-border-color: #ccc;" +
+            "-fx-border-radius: 5;" +
+            "-fx-padding: 10;" +
+            "-fx-font-size: 14px;"
+        );
+
+        // Market log
         marketLogArea = new TextArea();
         marketLogArea.setEditable(false);
         marketLogArea.setWrapText(true);
         marketLogArea.setPrefHeight(350);
-        marketLogArea.setStyle("-fx-background-color: #f4f4f4; -fx-border-color: #ddd; -fx-border-radius: 5; -fx-font-family: Arial; -fx-font-size: 14px;");
+        marketLogArea.setStyle(
+            "-fx-background-color: #ffffff;" +
+            "-fx-border-color: #ccc;" +
+            "-fx-border-radius: 5;" +
+            "-fx-font-size: 13px;"
+        );
 
-        VBox panel = new VBox(10, tradeControls, new Label("Market Log:"), marketLogArea);
-        panel.setPrefWidth(400);
-        // Inline style for right panel
-        panel.setStyle("-fx-background-color: white; -fx-border-color: #ccc; -fx-border-radius: 5; -fx-padding: 10;");
-        return panel;
+        VBox rightPanel = new VBox(10,
+            tradeControls,
+            new Label("Market Log:"),
+            marketLogArea
+        );
+        rightPanel.setPrefWidth(300);
+        rightPanel.setStyle(
+            "-fx-background-color: rgba(255,255,255,0.8);" +
+            "-fx-border-color: #ccc;" +
+            "-fx-border-radius: 5;" +
+            "-fx-padding: 10;"
+        );
+
+        return rightPanel;
     }
 
+    // ------------------------------------------------------------------------
+    // Bottom Left: News Feed
+    // ------------------------------------------------------------------------
+    private TextArea buildNewsArea() {
+        TextArea area = new TextArea();
+        area.setEditable(false);
+        area.setWrapText(true);
+        area.setPrefWidth(500);
+        area.setPrefHeight(250);
+        area.setStyle(
+            "-fx-background-color: #ffffff;" +
+            "-fx-border-color: #ccc;" +
+            "-fx-border-radius: 5;" +
+            "-fx-font-size: 13px;"
+        );
+        return area;
+    }
+
+    // ------------------------------------------------------------------------
+    // Bottom Right: Portfolio Box (Cash, Invested, NetWorth, Chart)
+    // ------------------------------------------------------------------------
     private VBox buildPortfolioBox() {
         cashLabel = new Label("Cash: $" + MONEY_FMT.format(playerMoney));
         investedLabel = new Label("Invested: $0.00");
         netWorthLabel = new Label("Net Worth: $" + MONEY_FMT.format(playerMoney));
-        // profitLossLabel removed as requested
+
+        cashLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold;");
+        investedLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold;");
+        netWorthLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold;");
 
         NumberAxis xAxis = new NumberAxis();
         NumberAxis yAxis = new NumberAxis();
@@ -340,26 +415,31 @@ public class App extends Application {
         yAxis.setLabel("Net Worth ($)");
 
         netWorthChart = new LineChart<>(xAxis, yAxis);
-        netWorthChart.setPrefSize(500, 250);
+        netWorthChart.setPrefSize(450, 250);
         netWorthChart.setCreateSymbols(false);
         netWorthChart.setAnimated(false);
         netWorthSeries.setName("Net Worth");
         netWorthChart.getData().add(netWorthSeries);
+        netWorthChart.setStyle("-fx-background-color: #fafafa;");
 
-        // Portfolio box now displays cash, invested, net worth, and the net worth chart
-        VBox portfolioBox = new VBox(8,
-                new Label("Portfolio:"),
-                cashLabel, investedLabel, netWorthLabel,
-                netWorthChart
+        VBox portfolioBox = new VBox(10,
+            new Label("Portfolio:"),
+            cashLabel, investedLabel, netWorthLabel,
+            netWorthChart
         );
-        portfolioBox.setPadding(new Insets(5));
-        portfolioBox.setStyle("-fx-background-color: white; -fx-border-color: #ccc; -fx-border-radius: 5; -fx-padding: 10;");
+        portfolioBox.setPadding(new Insets(10));
+        portfolioBox.setStyle(
+            "-fx-background-color: rgba(255,255,255,0.8);" +
+            "-fx-border-color: #ccc;" +
+            "-fx-border-radius: 5;" +
+            "-fx-padding: 10;"
+        );
         return portfolioBox;
     }
 
-    // -----------------------------
-    // Timers & Monthly Logic
-    // -----------------------------
+    // ------------------------------------------------------------------------
+    // Timers & Month Logic
+    // ------------------------------------------------------------------------
     private void startGameTimer() {
         Timeline gameTimeline = new Timeline(new KeyFrame(Duration.seconds(1), e -> {
             totalTimeLeft--;
@@ -404,6 +484,7 @@ public class App extends Application {
     }
 
     private void startNewsTimer() {
+        // Optional: a background "random" news every 5s with some probability
         Timeline newsTimeline = new Timeline(new KeyFrame(Duration.seconds(5), e -> {
             if (random.nextDouble() < 0.25) {
                 generateNewsEvent();
@@ -423,9 +504,9 @@ public class App extends Application {
         }
     }
 
-    // -----------------------------
+    // ------------------------------------------------------------------------
     // Trading Logic
-    // -----------------------------
+    // ------------------------------------------------------------------------
     private void buyShares(boolean buyMax) {
         Stock selected = stockTable.getSelectionModel().getSelectedItem();
         if (selected == null) {
@@ -494,9 +575,9 @@ public class App extends Application {
         updateMoneyLabels();
     }
 
-    // -----------------------------
+    // ------------------------------------------------------------------------
     // News & Price Impact
-    // -----------------------------
+    // ------------------------------------------------------------------------
     private void generateNewsEvent() {
         if (currentMonthIndex >= TOTAL_MONTHS) return;
         String headline = possibleNews.get(random.nextInt(possibleNews.size()));
@@ -542,9 +623,9 @@ public class App extends Application {
         timeline.play();
     }
 
-    // -----------------------------
+    // ------------------------------------------------------------------------
     // End Game
-    // -----------------------------
+    // ------------------------------------------------------------------------
     private void endGame() {
         logToMarket("\nAll 12 months of the year 2100 have passed!");
         double finalNetWorth = calculateNetWorth();
@@ -554,9 +635,9 @@ public class App extends Application {
         buySellSharesField.setDisable(true);
     }
 
-    // -----------------------------
-    // Helper Methods
-    // -----------------------------
+    // ------------------------------------------------------------------------
+    // Helpers
+    // ------------------------------------------------------------------------
     private void updateTimeLabels() {
         int minutes = totalTimeLeft / 60;
         int seconds = totalTimeLeft % 60;
@@ -565,8 +646,10 @@ public class App extends Application {
     }
 
     private String monthName(int index) {
-        String[] months = {"January","February","March","April","May","June",
-                           "July","August","September","October","November","December"};
+        String[] months = {
+            "January","February","March","April","May","June",
+            "July","August","September","October","November","December"
+        };
         return (index >= 0 && index < months.length) ? months[index] : "Unknown";
     }
 
@@ -600,13 +683,13 @@ public class App extends Application {
 
     private void showBuyAnimation(double cost) {
         Text text = new Text("+$" + MONEY_FMT.format(cost));
-        text.setFill(Color.GREEN);
+        text.setFill(Color.LIMEGREEN);
         fadeOutText(text);
     }
 
     private void showSellAnimation(double revenue) {
         Text text = new Text("-$" + MONEY_FMT.format(revenue));
-        text.setFill(Color.RED);
+        text.setFill(Color.ORANGERED);
         fadeOutText(text);
     }
 
@@ -617,25 +700,22 @@ public class App extends Application {
         ft.play();
     }
 
-    private Stock findStockByName(String name) {
-        for (Stock s : stocks) {
-            if (s.getName().equals(name)) return s;
-        }
-        return null;
-    }
-
     private List<Stock> findStocksByNames(List<String> names) {
         List<Stock> result = new ArrayList<>();
         for (String nm : names) {
-            Stock s = findStockByName(nm);
-            if (s != null) result.add(s);
+            for (Stock s : stocks) {
+                if (s.getName().equals(nm)) {
+                    result.add(s);
+                    break;
+                }
+            }
         }
         return result;
     }
 
-    // -----------------------------
+    // ------------------------------------------------------------------------
     // Data Initialization
-    // -----------------------------
+    // ------------------------------------------------------------------------
     private void initPossibleNews() {
         possibleNews.add("Major breakthrough in quantum thrusters!");
         possibleNews.add("Terraform Inc unveils new gene-edited seeds for Mars.");
@@ -666,7 +746,7 @@ public class App extends Application {
         list.add(new Stock("Terraform Inc", randomPrice(200, 500), "Works on terraforming planets."));
         list.add(new Stock("Deep Space Tech", randomPrice(70, 220), "Develops advanced deep-space technology."));
         list.add(new Stock("Zero-G Manufacturing", randomPrice(100, 250), "Manufactures goods in zero gravity."));
-        list.add(new Stock("Quantum Computing Labs", randomPrice(180, 400), "Pioneers quantum computing for space applications."));
+        list.add(new Stock("Quantum Computing Labs", randomPrice(180, 400), "Pioneers quantum computing for space apps."));
         return FXCollections.observableArrayList(list);
     }
 
@@ -674,9 +754,9 @@ public class App extends Application {
         return min + (max - min) * random.nextDouble();
     }
 
-    // -----------------------------
-    // Inner Class for Stock Data
-    // -----------------------------
+    // ------------------------------------------------------------------------
+    // Inner Class: Stock
+    // ------------------------------------------------------------------------
     public class Stock {
         private String name;
         private double price;
@@ -701,7 +781,9 @@ public class App extends Application {
         public String getDescription() { return description; }
         public ObservableList<XYChart.Data<Number, Number>> getPriceHistory() { return priceHistory; }
 
-        public void setPrice(double newPrice) { this.price = newPrice; }
+        public void setPrice(double newPrice) {
+            this.price = newPrice;
+        }
 
         public void updatePrice() {
             double move = random.nextDouble() * (PRICE_MOVE_UP + PRICE_MOVE_DOWN) - PRICE_MOVE_DOWN;
@@ -710,7 +792,7 @@ public class App extends Application {
             if (price < 1) price = 1;
             updateMovementIndicator(oldPrice, price);
             priceHistory.add(new XYChart.Data<>(historyCounter++, price));
-            if (priceHistory.size() > 100) {
+            if (priceHistory.size() > 200) {
                 priceHistory.remove(0);
             }
         }
@@ -733,14 +815,6 @@ public class App extends Application {
 
         public int nextHistoryCounter() {
             return historyCounter++;
-        }
-
-        public void applyNewsImpact(double step) {
-            double oldPrice = price;
-            price += step;
-            if (price < 1) price = 1;
-            updateMovementIndicator(oldPrice, price);
-            priceHistory.add(new XYChart.Data<>(historyCounter++, price));
         }
     }
 }
